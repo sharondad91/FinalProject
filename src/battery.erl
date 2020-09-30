@@ -12,7 +12,7 @@
 -behaviour(gen_statem).
 
 %% API
--export([start_link/1,wakeup/3,sleep/3,wakeup/0,sleep/0,die/3]).
+-export([start_battery/1,wakeup/3,sleep/3,wakeup/0,sleep/0,die/3]).
 
 %% gen_statem callbacks
 -export([init/1, format_status/2, handle_event/4, terminate/3,
@@ -29,7 +29,7 @@
 %% @doc Creates a gen_statem process which calls Module:init/1 to
 %% initialize. To ensure a synchronized start-up procedure, this
 %% function does not return until Module:init/1 has returned.
-start_link(SensorPid) ->
+start_battery(SensorPid) ->
   gen_statem:start_link({local, ?SERVER}, ?MODULE, [SensorPid], []).
 
 %%%===================================================================

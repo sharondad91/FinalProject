@@ -12,11 +12,14 @@
 -behaviour(gen_statem).
 
 %% API
--export([start_link/0]).
+-export([start_link/1, on/3, off/3,timer/3]).
 
 %% gen_statem callbacks
--export([init/1, format_status/2, state_name/3, handle_event/4, terminate/3,
+-export([init/1, format_status/2, handle_event/4, terminate/3,
   code_change/4, callback_mode/0]).
+
+%%-import(battery,[start_battery/1,wakeup/0,sleep/0]).
+-import(battery,[]).
 
 -define(SERVER, ?MODULE).
 
@@ -29,8 +32,8 @@
 %% @doc Creates a gen_statem process which calls Module:init/1 to
 %% initialize. To ensure a synchronized start-up procedure, this
 %% function does not return until Module:init/1 has returned.
-start_link() ->
-  gen_statem:start_link({local, ?SERVER}, ?MODULE, [], []).
+start_link(ManagerPid) ->
+  gen_statem:start_link({local, ?SERVER}, ?MODULE, [ManagerPid], []).
 
 %%%===================================================================
 %%% gen_statem callbacks
@@ -40,14 +43,16 @@ start_link() ->
 %% @doc Whenever a gen_statem is started using gen_statem:start/[3,4] or
 %% gen_statem:start_link/[3,4], this function is called by the new
 %% process to initialize.
-init([]) ->
-  {ok, state_name, #sensor_state{}}.
+init([ManagerPid]) ->
+  battery:start_battery(self()),
+  spawn_link(fun() -> timer(self(),random:uniform(5000)) end),
+  {ok, off, {ManagerPid}}.
 
 %% @private
 %% @doc This function is called by a gen_statem when it needs to find out
 %% the callback mode of the callback module.
 callback_mode() ->
-  handle_event_function.
+  state_functions.
 
 %% @private
 %% @doc Called (1) whenever sys:get_status/1,2 is called by gen_statem or
@@ -57,14 +62,13 @@ format_status(_Opt, [_PDict, _StateName, _State]) ->
   Status = some_term,
   Status.
 
-%% @private
-%% @doc There should be one instance of this function for each possible
-%% state name.  If callback_mode is state_functions, one of these
-%% functions is called when gen_statem receives and event from
-%% call/2, cast/2, or as a normal process message.
-state_name(_EventType, _EventContent, State = #sensor_state{}) ->
-  NextStateName = next_state,
-  {next_state, NextStateName, State}.
+
+
+on(cast,"wake up",{})->
+  battery:wakeup().
+
+off(cast,"sleep",{})->
+  battery:sleep().
 
 %% @private
 %% @doc If callback_mode is handle_event_function, then whenever a
@@ -90,3 +94,17 @@ code_change(_OldVsn, StateName, State = #sensor_state{}, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+on()->
+  gen_statem:cast(?MODULE,"Turn On").
+off()->
+  gen_statem:cast(?MODULE,"Turn Off").
+
+timer(off,SensorPid,StartTime) ->
+  timer:sleep(StartTime),
+  SensorPid ! "wake up",
+  timer(on,SensorPid,1000);
+
+timer(on,SensorPid,StartTime) ->
+  timer:sleep(StartTime),
+  SensorPid ! "Sleep",
+  timer(off,SensorPid,4000).
