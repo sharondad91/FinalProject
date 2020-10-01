@@ -12,11 +12,13 @@
 -behaviour(gen_statem).
 
 %% API
--export([start_battery/1,wakeup/3,sleep/3,wakeup/0,sleep/0,die/3]).
+-export([start_battery/1,wakeup/3,sleep/3,wakeup/1,sleep/1,die/3,stop/1]).
 
 %% gen_statem callbacks
 -export([init/1, format_status/2, handle_event/4, terminate/3,
   code_change/4, callback_mode/0]).
+
+-import(sensor,[]).
 
 -define(SERVER, ?MODULE).
 
@@ -30,7 +32,9 @@
 %% initialize. To ensure a synchronized start-up procedure, this
 %% function does not return until Module:init/1 has returned.
 start_battery(SensorPid) ->
-  gen_statem:start_link({local, ?SERVER}, ?MODULE, [SensorPid], []).
+%%  gen_statem:start_link({local, ?SERVER}, ?MODULE, [SensorPid], []).
+  {ok ,Pid} = gen_statem:start_link( ?MODULE, [SensorPid], []),
+  Pid.
 
 %%%===================================================================
 %%% gen_statem callbacks
@@ -62,29 +66,29 @@ format_status(_Opt, [_PDict, _StateName, _State]) ->
 %% state name.  If callback_mode is state_functions, one of these
 %% functions is called when gen_statem receives and event from
 %% call/2, cast/2, or as a normal process message.
-wakeup(cast,"Wake Up", {Energy,_Time,SensorPid}) when Energy>0 ->
+wakeup(_EventType,"Wake Up", {Energy,_Time,SensorPid}) when Energy>0 ->
   io:format("Energy: ~p ~n", [Energy]),
   {next_state,sleep,{Energy,erlang:system_time(),SensorPid}};
 wakeup(_EventType,"Wake Up", {_Energy,_Time,SensorPid}) ->
-%%  SensorPid ! "Battery dead".
+  sensor:transfer(SensorPid,"Battery dead"),
   {next_state,die,[]};
-wakeup(cast,_Other,{Energy,Time,SensorPid})->
+wakeup(_EventType,_Other,{Energy,Time,SensorPid})->
   {next_state,wakeup,{Energy,Time,SensorPid}}.
 
 
-die(cast,_,[])->
-  io:format("im dead"),
+die(_EventType,_,[])->
+  io:format("im (the battery) dead"),
   {next_state,die,[]}.
 
-sleep(cast,"Sleep",{Energy,Time,SensorPid})->
+sleep(_EventType,"Sleep",{Energy,Time,SensorPid})->
 %%  io:format("Energy: ~p ~n", [Energy]),
   Minus =  erlang:system_time()-Time,
 %%  io:format("Minus: ~p ~n", [Minus]),
   NewMinus = Minus/1000000000,
 %%  io:format("NewMinus: ~p ~n", [NewMinus]),
-  io:format("NewEnergy: ~p ~n", [Energy-NewMinus]),
+%%  io:format("NewEnergy: ~p ~n", [Energy-NewMinus]),
   {next_state,wakeup,{Energy-NewMinus,erlang:system_time(),SensorPid}};
-sleep(cast,_Other,{Energy,Time,SensorPid})->
+sleep(_EventType,_Other,{Energy,Time,SensorPid})->
   {next_state,sleep,{Energy,Time,SensorPid}}.
 
 
@@ -101,18 +105,19 @@ handle_event(_EventType, _EventContent, _StateName, State = #battery_state{}) ->
 %% terminate. It should be the opposite of Module:init/1 and do any
 %% necessary cleaning up. When it returns, the gen_statem terminates with
 %% Reason. The return value is ignored.
-terminate(_Reason, _StateName, _State = #battery_state{}) ->
+terminate(_Reason, _StateName, _State ) ->
   ok.
 
 %% @private
 %% @doc Convert process state when code is changed
-code_change(_OldVsn, StateName, State = #battery_state{}, _Extra) ->
+code_change(_OldVsn, StateName, State , _Extra) ->
   {ok, StateName, State}.
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-wakeup()->
-  gen_statem:cast(?MODULE,"Wake Up").
-sleep()->
-  gen_statem:cast(?MODULE,"Sleep").
+wakeup(PID)->
+  gen_statem:cast(PID,"Wake Up").
+sleep(PID)->
+  gen_statem:cast(PID,"Sleep").
+stop(PID)-> gen_statem:stop(PID).

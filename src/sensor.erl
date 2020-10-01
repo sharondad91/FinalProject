@@ -12,7 +12,7 @@
 -behaviour(gen_statem).
 
 %% API
--export([start_link/1, on/3, off/3,timer/3]).
+-export([start_sensor/1, on/3, off/3,timer/3,on/1, off/1,transfer/3, transfer/2,startSensor/3,dead/3]).
 
 %% gen_statem callbacks
 -export([init/1, format_status/2, handle_event/4, terminate/3,
@@ -32,9 +32,9 @@
 %% @doc Creates a gen_statem process which calls Module:init/1 to
 %% initialize. To ensure a synchronized start-up procedure, this
 %% function does not return until Module:init/1 has returned.
-start_link(ManagerPid) ->
-  gen_statem:start_link({local, ?SERVER}, ?MODULE, [ManagerPid], []).
-
+start_sensor(ManagerPid) ->
+  {ok ,Pid} = gen_statem:start_link(?MODULE, [ManagerPid], []),
+  Pid.
 %%%===================================================================
 %%% gen_statem callbacks
 %%%===================================================================
@@ -44,9 +44,8 @@ start_link(ManagerPid) ->
 %% gen_statem:start_link/[3,4], this function is called by the new
 %% process to initialize.
 init([ManagerPid]) ->
-  battery:start_battery(self()),
-  spawn_link(fun() -> timer(self(),random:uniform(5000)) end),
-  {ok, off, {ManagerPid}}.
+  BatPid = battery:start_battery(self()),
+  {ok, startSensor, {BatPid, ManagerPid}}.
 
 %% @private
 %% @doc This function is called by a gen_statem when it needs to find out
@@ -63,13 +62,48 @@ format_status(_Opt, [_PDict, _StateName, _State]) ->
   Status.
 
 
+startSensor(_EventType,"Turn On",{BatPid, ManagerPid}) ->
+%%  spawn_link(fun() -> timer(on, self(),rand:uniform(5000)) end),
+  SelfPid = self(),
+  spawn(fun() -> timer(on, SelfPid,rand:uniform(5000)) end),
+  {next_state, transfer, {BatPid, ManagerPid}}.
 
-on(cast,"wake up",{})->
-  battery:wakeup().
+on(_EventType,"wake up", {BatPid, ManagerPid})->
+  battery:wakeup(BatPid),
+  ManagerPid ! {"I woke up", self()},
+  ManagerPid ! {{"Temp,Wind,Move"}, self(), self()}, %%TODO send self mesurments
+  {next_state,transfer,  {BatPid, ManagerPid}}.
 
-off(cast,"sleep",{})->
-  battery:sleep().
+transfer(_EventType,{{Temp,Wind,Move}, SenderPid} , {BatPid, ManagerPid})->
+  Val = put(self(),{Temp,Wind,Move}),
+  if Val == undefined ->
+    ManagerPid ! {{Temp,Wind,Move}, SenderPid, self()}
+  end,
+  {next_state,transfer,  {BatPid, ManagerPid}};
 
+transfer(_EventType,"Exit" , {BatPid, ManagerPid})->
+  {next_state,off,  {BatPid, ManagerPid}};
+
+transfer(_EventType,"Battery dead" , {BatPid, ManagerPid})->
+  io:format("transferBatDead"),
+  ManagerPid ! {"Battery dead", self()},
+  battery:stop(BatPid),
+  {next_state,dead,{}};
+
+transfer(_EventType,_FireAlert , {BatPid, ManagerPid})->
+  io:format("Fire or Unknown, Run!!!!!!!!!!!!!"),
+  {next_state,transfer,  {BatPid, ManagerPid}}.
+
+
+
+off(_EventType,"sleep",{BatPid, ManagerPid})->
+  ManagerPid ! {"Im going to sleep", self()},
+  battery:sleep(BatPid),
+  {next_state, on, {BatPid, ManagerPid}}.
+
+
+dead(_EventType, _Message, {}) ->
+  {next_state, dead,{}}.
 %% @private
 %% @doc If callback_mode is handle_event_function, then whenever a
 %% gen_statem receives an event from call/2, cast/2, or as a normal
@@ -83,21 +117,25 @@ handle_event(_EventType, _EventContent, _StateName, State = #sensor_state{}) ->
 %% terminate. It should be the opposite of Module:init/1 and do any
 %% necessary cleaning up. When it returns, the gen_statem terminates with
 %% Reason. The return value is ignored.
-terminate(_Reason, _StateName, _State = #sensor_state{}) ->
+terminate(_Reason, _StateName, _State) ->
   ok.
 
 %% @private
 %% @doc Convert process state when code is changed
-code_change(_OldVsn, StateName, State = #sensor_state{}, _Extra) ->
+code_change(_OldVsn, StateName, State, _Extra) ->
   {ok, StateName, State}.
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-on()->
-  gen_statem:cast(?MODULE,"Turn On").
-off()->
-  gen_statem:cast(?MODULE,"Turn Off").
+on(Pid)->
+  gen_statem:cast(Pid,"Turn On").
+off(Pid)->
+  gen_statem:stop(Pid).
+transfer(Pid, Message)->
+  gen_statem:cast(Pid,Message).
+
+
 
 timer(off,SensorPid,StartTime) ->
   timer:sleep(StartTime),
@@ -106,5 +144,8 @@ timer(off,SensorPid,StartTime) ->
 
 timer(on,SensorPid,StartTime) ->
   timer:sleep(StartTime),
-  SensorPid ! "Sleep",
+  SensorPid ! "Exit",
+  SensorPid ! "sleep",
   timer(off,SensorPid,4000).
+
+
