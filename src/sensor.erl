@@ -12,7 +12,7 @@
 -behaviour(gen_statem).
 
 %% API
--export([start_sensor/1, on/3, off/3,timer/3,on/1, off/1,transfer/3, transfer/2,startSensor/3,dead/3]).
+-export([start_sensor/3, on/3, off/3,timer/3,on/1, off/1,transfer/3, transfer/2,startSensor/3,dead/3,tempFunc/2,windFunc/2]).
 
 %% gen_statem callbacks
 -export([init/1, format_status/2, handle_event/4, terminate/3,
@@ -32,8 +32,8 @@
 %% @doc Creates a gen_statem process which calls Module:init/1 to
 %% initialize. To ensure a synchronized start-up procedure, this
 %% function does not return until Module:init/1 has returned.
-start_sensor(ManagerPid) ->
-  {ok ,Pid} = gen_statem:start_link(?MODULE, [ManagerPid], []),
+start_sensor(ManagerPid,X,Y) ->
+  {ok ,Pid} = gen_statem:start_link(?MODULE, [ManagerPid,X,Y], []),
   Pid.
 %%%===================================================================
 %%% gen_statem callbacks
@@ -43,9 +43,9 @@ start_sensor(ManagerPid) ->
 %% @doc Whenever a gen_statem is started using gen_statem:start/[3,4] or
 %% gen_statem:start_link/[3,4], this function is called by the new
 %% process to initialize.
-init([ManagerPid]) ->
+init([ManagerPid,X,Y]) ->
   BatPid = battery:start_battery(self()),
-  {ok, startSensor, {BatPid, ManagerPid}}.
+  {ok, startSensor, {BatPid, ManagerPid,X,Y}}.
 
 %% @private
 %% @doc This function is called by a gen_statem when it needs to find out
@@ -62,44 +62,44 @@ format_status(_Opt, [_PDict, _StateName, _State]) ->
   Status.
 
 
-startSensor(_EventType,"Turn On",{BatPid, ManagerPid}) ->
+startSensor(_EventType,"Turn On",{BatPid, ManagerPid,X,Y}) ->
 %%  spawn_link(fun() -> timer(on, self(),rand:uniform(5000)) end),
   SelfPid = self(),
   spawn(fun() -> timer(on, SelfPid,rand:uniform(5000)) end),
-  {next_state, transfer, {BatPid, ManagerPid}}.
+  {next_state, transfer, {BatPid, ManagerPid,X,Y}}.
 
-on(_EventType,"wake up", {BatPid, ManagerPid})->
+on(_EventType,"wake up", {BatPid, ManagerPid,X,Y})->
   battery:wakeup(BatPid),
   ManagerPid ! {"I woke up", self()},
-  ManagerPid ! {{"Temp,Wind,Move"}, self(), self()}, %%TODO send self mesurments
-  {next_state,transfer,  {BatPid, ManagerPid}}.
+  ManagerPid ! {{tempFunc(X,Y),windFunc(X,Y)}, self(), self()}, %%TODO import cordinates
+  {next_state,transfer,  {BatPid, ManagerPid,X,Y}}.
 
-transfer(_EventType,{{Temp,Wind,Move}, SenderPid} , {BatPid, ManagerPid})->
-  Val = put(self(),{Temp,Wind,Move}),
+transfer(_EventType,{{Temp,Wind}, SenderPid} , {BatPid, ManagerPid,X,Y})->
+  Val = put(self(),{Temp,Wind}),
   if Val == undefined ->
-    ManagerPid ! {{Temp,Wind,Move}, SenderPid, self()}
+    ManagerPid ! {{Temp,Wind}, SenderPid, self()}
   end,
-  {next_state,transfer,  {BatPid, ManagerPid}};
+  {next_state,transfer,  {BatPid, ManagerPid,X,Y}};
 
-transfer(_EventType,"Exit" , {BatPid, ManagerPid})->
-  {next_state,off,  {BatPid, ManagerPid}};
+transfer(_EventType,"Exit" , {BatPid, ManagerPid,X,Y})->
+  {next_state,off,  {BatPid, ManagerPid,X,Y}};
 
-transfer(_EventType,"Battery dead" , {BatPid, ManagerPid})->
+transfer(_EventType,"Battery dead" , {BatPid, ManagerPid,_X,_Y})->
   io:format("transferBatDead"),
   ManagerPid ! {"Battery dead", self()},
   battery:stop(BatPid),
   {next_state,dead,{}};
 
-transfer(_EventType,_FireAlert , {BatPid, ManagerPid})->
+transfer(_EventType,_FireAlert , {BatPid, ManagerPid,X,Y})->
   io:format("Fire or Unknown, Run!!!!!!!!!!!!!"),
-  {next_state,transfer,  {BatPid, ManagerPid}}.
+  {next_state,transfer,  {BatPid, ManagerPid,X,Y}}.
 
 
 
-off(_EventType,"sleep",{BatPid, ManagerPid})->
+off(_EventType,"sleep",{BatPid, ManagerPid,X,Y})->
   ManagerPid ! {"Im going to sleep", self()},
   battery:sleep(BatPid),
-  {next_state, on, {BatPid, ManagerPid}}.
+  {next_state, on, {BatPid, ManagerPid,X,Y}}.
 
 
 dead(_EventType, _Message, {}) ->
@@ -148,4 +148,16 @@ timer(on,SensorPid,StartTime) ->
   SensorPid ! "sleep",
   timer(off,SensorPid,4000).
 
+tempFunc(X,Y) ->
+  OneTime = erlang:system_time()/9,
+  IntTime = round(OneTime),
+  TwoTime = IntTime rem 100,
+  NewTemp = abs(math:sin((X+Y)*TwoTime)*40),
+  NewTemp.
 
+windFunc(X,Y) ->
+  OneWind = erlang:system_time()/9,
+  IntWind = round(OneWind),
+  TwoWind = IntWind rem 100,
+  NewWind = abs(math:sin((X+Y)*TwoWind)*30),
+  NewWind.
