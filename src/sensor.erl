@@ -71,7 +71,7 @@ startSensor(_EventType,"Turn On",{BatPid, ManagerPid,X,Y}) ->
 on(_EventType,"wake up", {BatPid, ManagerPid,X,Y})->
   battery:wakeup(BatPid),
   ManagerPid ! {"I woke up", self()},
-  ManagerPid ! {{tempFunc(X,Y),windFunc(X,Y)}, self(), self()}, %%TODO import cordinates
+  ManagerPid ! {{tempFunc(X,Y),windFunc(X,Y)}, self(), self()},
   {next_state,transfer,  {BatPid, ManagerPid,X,Y}}.
 
 transfer(_EventType,{{Temp,Wind}, SenderPid} , {BatPid, ManagerPid,X,Y})->
