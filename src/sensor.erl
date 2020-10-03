@@ -70,23 +70,25 @@ startSensor(_EventType,"Turn On",{BatPid, ManagerPid,X,Y}) ->
 
 on(_EventType,"wake up", {BatPid, ManagerPid,X,Y})->
   battery:wakeup(BatPid),
-  ManagerPid ! {"I woke up", self()},
-  ManagerPid ! {{tempFunc(X,Y),windFunc(X,Y)}, self(), self()},
+  ManagerPid ! {"I woke up", {X,Y}},
+  ManagerPid ! {{tempFunc(X,Y),windFunc(X,Y)}, {X,Y}, {X,Y}},
   {next_state,transfer,  {BatPid, ManagerPid,X,Y}}.
 
-transfer(_EventType,{{Temp,Wind}, SenderPid} , {BatPid, ManagerPid,X,Y})->
-  Val = put(self(),{Temp,Wind}),
-  if Val == undefined ->
-    ManagerPid ! {{Temp,Wind}, SenderPid, self()}
+transfer(_EventType,{{Temp,Wind}, SenderLocation} , {BatPid, ManagerPid,X,Y})->
+  Val = put(self(),{SenderLocation,Temp,Wind}),
+  io:format("transfer:: I'm:{~p,~p} , Sender:~p , stats: {~p,~p}~n",[X,Y,SenderLocation,Temp,Wind]),
+  if
+    Val == undefined -> ManagerPid ! {{Temp,Wind}, SenderLocation, {X,Y}};
+    true -> ok
   end,
   {next_state,transfer,  {BatPid, ManagerPid,X,Y}};
 
 transfer(_EventType,"Exit" , {BatPid, ManagerPid,X,Y})->
   {next_state,off,  {BatPid, ManagerPid,X,Y}};
 
-transfer(_EventType,"Battery dead" , {BatPid, ManagerPid,_X,_Y})->
+transfer(_EventType,"Battery dead" , {BatPid, ManagerPid,X,Y})->
   io:format("transferBatDead"),
-  ManagerPid ! {"Battery dead", self()},
+  ManagerPid ! {"Battery dead", {X,Y}},
   battery:stop(BatPid),
   {next_state,dead,{}};
 
@@ -97,7 +99,7 @@ transfer(_EventType,_FireAlert , {BatPid, ManagerPid,X,Y})->
 
 
 off(_EventType,"sleep",{BatPid, ManagerPid,X,Y})->
-  ManagerPid ! {"Im going to sleep", self()},
+  ManagerPid ! {"Im going to sleep", {X,Y}},
   battery:sleep(BatPid),
   {next_state, on, {BatPid, ManagerPid,X,Y}}.
 

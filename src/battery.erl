@@ -67,7 +67,7 @@ format_status(_Opt, [_PDict, _StateName, _State]) ->
 %% functions is called when gen_statem receives and event from
 %% call/2, cast/2, or as a normal process message.
 wakeup(_EventType,"Wake Up", {Energy,_Time,SensorPid}) when Energy>0 ->
-  io:format("Energy: ~p ~n", [Energy]),
+%%  io:format("Energy: ~p ~n", [Energy]),
   {next_state,sleep,{Energy,erlang:system_time(),SensorPid}};
 wakeup(_EventType,"Wake Up", {_Energy,_Time,SensorPid}) ->
   sensor:transfer(SensorPid,"Battery dead"),
