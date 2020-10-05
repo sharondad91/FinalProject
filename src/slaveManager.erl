@@ -8,7 +8,7 @@
 
 -behaviour(gen_server).
 
--export([start_server/4]).
+-export([start_server/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
   code_change/3,send/2]).
 
@@ -22,8 +22,10 @@
 %%% Spawning and gen_server implementation
 %%%===================================================================
 
-start_server(Name,TableName, {StartX,EndX},{StartY,EndY}) ->
-  gen_server:start_link({global, Name}, ?MODULE, [TableName, {StartX,EndX},{StartY,EndY}], []).
+%%start_server(Name,TableName, {StartX,EndX},{StartY,EndY}) ->
+%%  gen_server:start_link({global, Name}, ?MODULE, [TableName, {StartX,EndX},{StartY,EndY}], []).
+start_server(Name,TableName, Index) ->
+  gen_server:start_link({global, Name}, ?MODULE, [TableName, {0,Index},{0,Index}], []).
 
 
 init([TableName, {StartX,EndX},{StartY,EndY}]) ->
@@ -79,59 +81,77 @@ createTableRow(TableName,Rad, ManagerPid,X,Y,{StartX,StartY,EndX,EndY}) when X =
 createTableRow(_TableName,_Rad, _ManagerPid,_X,_Y,_Boundaries) -> ok.
 
 createTableCol(TableName,Rad, ManagerPid,X,Y,{StartX,StartY,EndX,EndY}) when Y=< EndY ->
-  List = createNeighbors(Rad,X,Y,{StartX,StartY,EndX,EndY}
   TempSensorPid = sensor:start_sensor(ManagerPid,X,Y),
-  R = #sensorData{x ={X,Y}, y ={ TempSensorPid, true, List}},
+  R = #sensorData{x ={X,Y}, y ={ TempSensorPid, true, []}},
   mnesia:dirty_write(TableName,R),
+  createNeighbors(TableName,Rad,X,Y),
   sensor:on(TempSensorPid),
-  createTableCol(TableName, ManagerPid,X,Y+1,{StartX,StartY,EndX,EndY});
+  createTableCol(TableName,Rad, ManagerPid,X,Y+1,{StartX,StartY,EndX,EndY});
 
 createTableCol(_TableName,_Rad, _ManagerPid,_X,_Y,_Boundaries) -> ok.
 
-createNeighbors(Rad,X,Y,{StartX,StartY,EndX,EndY},List) when Rad>=1 ->
-  Lright = create(Rad,X,Y,X-1,Y,{StartX,StartY,EndX,EndY},List),
-  Lup = create(Rad,X,Y,X,Y-1,{StartX,StartY,EndX,EndY},List),
-  Lleft = create(Rad,X,Y,X+1,Y,{StartX,StartY,EndX,EndY},List),
-  Ldown = create(Rad,X,Y,X,Y+1,{StartX,StartY,EndX,EndY},List),,
-  ListSides = lists:merge3(List,Lright,Lleft),
-  ListAll = lists:merge3(ListSides,Lup,Ldown),
-  NeiList = lists:usort(ListAll).
-%%(חוקיים שלא ברשימה(הוסף את כל המשכנים מסביבי
-%%שלח לפונקציה את ראד מינוס1 לכל שכן שהוסף
-%%עד שראד שווה 0
+createNeighbors(TableName,Rad,X,Y) when Rad>=1 ->
+%%  io:format("create neighbors for {~p,~p}~n",[X,Y]),
+  create(TableName,Rad,right,X,Y,X+1,Y),
+%%  io:format("create Right neighbors~n"),
+  create(TableName,Rad,up,X,Y,X,Y-1),
+%%  io:format("create UP neighbors~n"),
+  create(TableName,Rad,left,X,Y,X-1,Y),
+%%  io:format("create Left neighbors~n"),
+  create(TableName,Rad,down,X,Y,X,Y+1),
+  Q=mnesia:dirty_read(TableName, {X,Y}),
+  io:format("{~p,~p} data is : ~p~n",[X,Y,Q]).
 
-create(Rad,XPoint,YPoint,Xnei,Ynei,{StartX,StartY,EndX,EndY},List)->
-  XPow = math:pow(XPoint-Xnei,2),
-  YPow = math:pow(YPoint-Ynei,2),
-  RPow = math:pow(Rad,2),
+
+
+
+
+create(TableName,Rad,From,XPoint,YPoint,Xnei,Ynei)->
+  [{_NameTable,_Location,{_Pid,_Status, NeighborList}}] = mnesia:dirty_read(TableName, {XPoint,YPoint}),
+  Exist = lists:member({Xnei,Ynei},NeighborList),
   if
-      (XPow+YPow)=< RPow ->
-        Lright = create(Rad,XPoint,YPoint,Xnei-1,Ynei,{StartX,StartY,EndX,EndY},[{Xnei,Ynei}|List]),
-        Lup = create(Rad,XPoint,YPoint,Xnei,Ynei-1,{StartX,StartY,EndX,EndY},[{Xnei,Ynei}|List]),
-        Lleft = create(Rad,XPoint,YPoint,Xnei+1,Ynei,{StartX,StartY,EndX,EndY},[{Xnei,Ynei}|List]),
-        Ldown = create(Rad,XPoint,YPoint,Xnei,Ynei+1,{StartX,StartY,EndX,EndY},[{Xnei,Ynei}|List]),
-        ListSides = lists:merge3(List,Lright,Lleft),
-        ListAll = lists:merge3(ListSides,Lup,Ldown),
-        ListAll;
-      true->
-        List
+    Exist == true -> [];
+    true ->XPow = math:pow(XPoint-Xnei,2),
+      YPow = math:pow(YPoint-Ynei,2),
+      RPow = math:pow(Rad,2),
+      if
+        (XPow+YPow)=< RPow ->
+          addNeighbor(TableName,XPoint,YPoint,Xnei,Ynei),
+%%          io:format("{~p,~p}~n",[Xnei,Ynei]),
+          case From of
+            left ->
+              create(TableName,Rad,left,XPoint,YPoint,Xnei-1,Ynei),
+              create(TableName,Rad,up,XPoint,YPoint,Xnei,Ynei-1),
+              create(TableName,Rad,down,XPoint,YPoint,Xnei,Ynei+1);
+            right ->
+              create(TableName,Rad,right,XPoint,YPoint,Xnei+1,Ynei),
+              create(TableName,Rad,up,XPoint,YPoint,Xnei,Ynei-1),
+              create(TableName,Rad,down,XPoint,YPoint,Xnei,Ynei+1);
+            up ->
+              create(TableName,Rad,left,XPoint,YPoint,Xnei-1,Ynei),
+              create(TableName,Rad,right,XPoint,YPoint,Xnei+1,Ynei),
+              create(TableName,Rad,up,XPoint,YPoint,Xnei,Ynei-1);
+            down ->
+              create(TableName,Rad,left,XPoint,YPoint,Xnei-1,Ynei),
+              create(TableName,Rad,right,XPoint,YPoint,Xnei+1,Ynei),
+              create(TableName,Rad,down,XPoint,YPoint,Xnei,Ynei+1)
+          end;
+        true->ok
+      end
   end.
 
-
-
+addNeighbor(TableName,XPoint,YPoint,Xnei,Ynei) ->
+  io:format("{~p,~p} try to add {~p,~p}~n", [XPoint,YPoint,Xnei,Ynei]),
+  [{_NameTable,_Location,{Pid,Status, NeighborList}}] = mnesia:dirty_read(TableName, {XPoint,YPoint}),
+  Exist = lists:member({Xnei,Ynei},NeighborList),
   if
-    X>0  ->
-      if
-        Y>0 -> List = [{X-1,Y}, {X,Y-1},{X-1,Y-1}];
-        true -> List = List = [{X-1,0}]
-      end;
+    Exist == true -> ok;
     true ->
-      if
-        Y>0 -> List = [{0,Y-1}];
-        true -> List = []
-      end
-  end,
-  lists:join({X-1,Y},List).
+%      NewList = lists:join({Xnei,Ynei},NeighborList),
+      io:format("{~p,~p} add{~p,~p}~n", [XPoint,YPoint,Xnei,Ynei]),
+      R = #sensorData{x = {XPoint,YPoint}, y ={ Pid, Status, [{Xnei,Ynei}|NeighborList]}},
+      mnesia:dirty_write(TableName,R)
+  end.
 
 
 
