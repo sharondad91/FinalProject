@@ -31,7 +31,7 @@ init([TableName, {StartX,EndX},{StartY,EndY}]) ->
   mnesia:create_schema(node()),
   mnesia:start(),
   mnesia:create_table(TableName,[{access_mode, read_write}, {type, set}, {record_name, sensorData}, {attributes, record_info(fields, sensorData)}]),
-  createTableRow(TableName, MyPid,StartX,StartY,EndX,EndY),
+  createTableRow(TableName,3, MyPid,StartX,StartY,{StartX,StartY,EndX,EndY}),
   {ok, TableName}.
 
 handle_call(_Request, _From, State) ->
@@ -72,39 +72,73 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-createTableRow(TableName, ManagerPid,X,Y,EndX,EndY) when X =< EndX  ->
-  createTableCol(TableName, ManagerPid,X,Y,EndY),
-  createTableRow(TableName, ManagerPid,X+1,Y,EndX,EndY);
+createTableRow(TableName,Rad, ManagerPid,X,Y,{StartX,StartY,EndX,EndY}) when X =< EndX  ->
+  createTableCol(TableName,Rad, ManagerPid,X,Y,{StartX,StartY,EndX,EndY}),
+  createTableRow(TableName,Rad, ManagerPid,X+1,Y,{StartX,StartY,EndX,EndY});
 
-createTableRow(_TableName, _ManagerPid,_X,_Y,_EndX, _EndY) -> ok.
+createTableRow(_TableName,_Rad, _ManagerPid,_X,_Y,_Boundaries) -> ok.
 
-createTableCol(TableName, ManagerPid,X,Y,EndY) when Y=< EndY ->
+createTableCol(TableName,Rad, ManagerPid,X,Y,{StartX,StartY,EndX,EndY}) when Y=< EndY ->
+  List = createNeighbors(Rad,X,Y,{StartX,StartY,EndX,EndY}
+  TempSensorPid = sensor:start_sensor(ManagerPid,X,Y),
+  R = #sensorData{x ={X,Y}, y ={ TempSensorPid, true, List}},
+  mnesia:dirty_write(TableName,R),
+  sensor:on(TempSensorPid),
+  createTableCol(TableName, ManagerPid,X,Y+1,{StartX,StartY,EndX,EndY});
+
+createTableCol(_TableName,_Rad, _ManagerPid,_X,_Y,_Boundaries) -> ok.
+
+createNeighbors(Rad,X,Y,{StartX,StartY,EndX,EndY},List) when Rad>=1 ->
+  Lright = create(Rad,X,Y,X-1,Y,{StartX,StartY,EndX,EndY},List),
+  Lup = create(Rad,X,Y,X,Y-1,{StartX,StartY,EndX,EndY},List),
+  Lleft = create(Rad,X,Y,X+1,Y,{StartX,StartY,EndX,EndY},List),
+  Ldown = create(Rad,X,Y,X,Y+1,{StartX,StartY,EndX,EndY},List),,
+  ListSides = lists:merge3(List,Lright,Lleft),
+  ListAll = lists:merge3(ListSides,Lup,Ldown),
+  NeiList = lists:usort(ListAll).
+%%(חוקיים שלא ברשימה(הוסף את כל המשכנים מסביבי
+%%שלח לפונקציה את ראד מינוס1 לכל שכן שהוסף
+%%עד שראד שווה 0
+
+create(Rad,XPoint,YPoint,Xnei,Ynei,{StartX,StartY,EndX,EndY},List)->
+  XPow = math:pow(XPoint-Xnei,2),
+  YPow = math:pow(YPoint-Ynei,2),
+  RPow = math:pow(Rad,2),
+  if
+      (XPow+YPow)=< RPow ->
+        Lright = create(Rad,XPoint,YPoint,Xnei-1,Ynei,{StartX,StartY,EndX,EndY},[{Xnei,Ynei}|List]),
+        Lup = create(Rad,XPoint,YPoint,Xnei,Ynei-1,{StartX,StartY,EndX,EndY},[{Xnei,Ynei}|List]),
+        Lleft = create(Rad,XPoint,YPoint,Xnei+1,Ynei,{StartX,StartY,EndX,EndY},[{Xnei,Ynei}|List]),
+        Ldown = create(Rad,XPoint,YPoint,Xnei,Ynei+1,{StartX,StartY,EndX,EndY},[{Xnei,Ynei}|List]),
+        ListSides = lists:merge3(List,Lright,Lleft),
+        ListAll = lists:merge3(ListSides,Lup,Ldown),
+        ListAll;
+      true->
+        List
+  end.
+
+
+
   if
     X>0  ->
       if
         Y>0 -> List = [{X-1,Y}, {X,Y-1},{X-1,Y-1}];
         true -> List = List = [{X-1,0}]
-        end;
+      end;
     true ->
       if
         Y>0 -> List = [{0,Y-1}];
         true -> List = []
-        end
+      end
   end,
-  TempSensorPid = sensor:start_sensor(ManagerPid,X,Y),
-  R = #sensorData{x ={X,Y}, y ={ TempSensorPid, true, List}},
-  mnesia:dirty_write(TableName,R),
-  sensor:on(TempSensorPid),
-  createTableCol(TableName, ManagerPid,X,Y+1,EndY);
+  lists:join({X-1,Y},List).
 
-createTableCol(_TableName, _ManagerPid,_X,_Y,_EndY) -> ok.
+
 
 switchOn(TableName,X,Y) ->
   [{_NameTable,Location,{Pid,_Status, NeighborList}}] = mnesia:dirty_read(TableName, {X,Y}),
   R = #sensorData{x =Location, y ={ Pid, true, NeighborList}},
   mnesia:dirty_write(TableName,R).
-
-
 
 switchOff(TableName,X,Y) ->
  [{_NameTable,Location,{Pid,Status, NeighborList}}] = mnesia:dirty_read(TableName, {X,Y}),
