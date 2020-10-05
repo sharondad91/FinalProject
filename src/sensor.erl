@@ -12,18 +12,19 @@
 -behaviour(gen_statem).
 
 %% API
--export([start_sensor/3, on/3, off/3,timer/3,on/1, off/1,transfer/3, transfer/2,startSensor/3,dead/3,tempFunc/2,windFunc/2]).
+-export([start_sensor/3, on/3, off/3,timer/3,timer/2, on/1, off/1,transfer/3, transfer/2,startSensor/3,dead/3,tempFunc/2,windFunc/2]).
 
 %% gen_statem callbacks
 -export([init/1, format_status/2, handle_event/4, terminate/3,
-  code_change/4, callback_mode/0]).
+  code_change/4, callback_mode/0,stop/1]).
 
 %%-import(battery,[start_battery/1,wakeup/0,sleep/0]).
 -import(battery,[]).
+-import(slaveManager,[]).
 
 -define(SERVER, ?MODULE).
 
--record(sensor_state, {}).
+%%-record(sensor_state, {}).
 
 %%%===================================================================
 %%% API
@@ -65,21 +66,30 @@ format_status(_Opt, [_PDict, _StateName, _State]) ->
 startSensor(_EventType,"Turn On",{BatPid, ManagerPid,X,Y}) ->
 %%  spawn_link(fun() -> timer(on, self(),rand:uniform(5000)) end),
   SelfPid = self(),
-  spawn(fun() -> timer(on, SelfPid,rand:uniform(5000)) end),
+  if
+    {X,Y} == {0,0} -> spawn(fun() -> timer(on, SelfPid) end);
+    true -> spawn(fun() -> timer(on, SelfPid,rand:uniform(5000)) end)
+  end,
+
   {next_state, transfer, {BatPid, ManagerPid,X,Y}}.
 
 on(_EventType,"wake up", {BatPid, ManagerPid,X,Y})->
   battery:wakeup(BatPid),
-  ManagerPid ! {"I woke up", {X,Y}},
-  ManagerPid ! {{tempFunc(X,Y),windFunc(X,Y)}, {X,Y}, {X,Y}},
+  slaveManager:send(ManagerPid,{"I woke up", {X,Y}}),
+%%  ManagerPid ! {"I woke up", {X,Y}},
+  slaveManager:send(ManagerPid,{{tempFunc(X,Y),windFunc(X,Y)}, {X,Y}, {X,Y}}),
+%%  ManagerPid ! {{tempFunc(X,Y),windFunc(X,Y)}, {X,Y}, {X,Y}},
   {next_state,transfer,  {BatPid, ManagerPid,X,Y}}.
 
 transfer(_EventType,{{Temp,Wind}, SenderLocation} , {BatPid, ManagerPid,X,Y})->
-  Val = put(self(),{SenderLocation,Temp,Wind}),
-  io:format("transfer:: I'm:{~p,~p} , Sender:~p , stats: {~p,~p}~n",[X,Y,SenderLocation,Temp,Wind]),
   if
-    Val == undefined -> ManagerPid ! {{Temp,Wind}, SenderLocation, {X,Y}};
-    true -> ok
+    {X,Y} == {0,0} -> io:format("{0,0} entrey: recived from ~p messege ~p~n",[SenderLocation,{Temp,Wind}]) ;
+    true ->
+      Val = put(SenderLocation,{SenderLocation,Temp,Wind}),
+      if
+           Val == undefined -> slaveManager:send(ManagerPid,{{Temp,Wind}, SenderLocation, {X,Y}});
+         true -> ok
+      end
   end,
   {next_state,transfer,  {BatPid, ManagerPid,X,Y}};
 
@@ -87,8 +97,7 @@ transfer(_EventType,"Exit" , {BatPid, ManagerPid,X,Y})->
   {next_state,off,  {BatPid, ManagerPid,X,Y}};
 
 transfer(_EventType,"Battery dead" , {BatPid, ManagerPid,X,Y})->
-  io:format("transferBatDead"),
-  ManagerPid ! {"Battery dead", {X,Y}},
+  slaveManager:send(ManagerPid,{"Battery dead", {X,Y}}),
   battery:stop(BatPid),
   {next_state,dead,{}};
 
@@ -99,7 +108,9 @@ transfer(_EventType,_FireAlert , {BatPid, ManagerPid,X,Y})->
 
 
 off(_EventType,"sleep",{BatPid, ManagerPid,X,Y})->
-  ManagerPid ! {"Im going to sleep", {X,Y}},
+  slaveManager:send(ManagerPid,{"Im going to sleep", {X,Y}}),
+%%  ManagerPid ! {"Im going to sleep", {X,Y}},
+  erase(),
   battery:sleep(BatPid),
   {next_state, on, {BatPid, ManagerPid,X,Y}}.
 
@@ -110,7 +121,7 @@ dead(_EventType, _Message, {}) ->
 %% @doc If callback_mode is handle_event_function, then whenever a
 %% gen_statem receives an event from call/2, cast/2, or as a normal
 %% process message, this function is called.
-handle_event(_EventType, _EventContent, _StateName, State = #sensor_state{}) ->
+handle_event(_EventType, _EventContent, _StateName, State) ->
   NextStateName = the_next_state_name,
   {next_state, NextStateName, State}.
 
@@ -136,30 +147,37 @@ off(Pid)->
   gen_statem:stop(Pid).
 transfer(Pid, Message)->
   gen_statem:cast(Pid,Message).
+stop(PID)-> gen_statem:stop(PID).
 
 
 
 timer(off,SensorPid,StartTime) ->
   timer:sleep(StartTime),
   SensorPid ! "wake up",
-  timer(on,SensorPid,1000);
+  timer(on,SensorPid,8000);
 
 timer(on,SensorPid,StartTime) ->
   timer:sleep(StartTime),
   SensorPid ! "Exit",
   SensorPid ! "sleep",
-  timer(off,SensorPid,4000).
+  timer(off,SensorPid,2000).
+
+timer(on,SensorPid) ->
+  timer:sleep(100000000),
+  timer(on,SensorPid).
+
 
 tempFunc(X,Y) ->
   OneTime = erlang:system_time()/9,
   IntTime = round(OneTime),
   TwoTime = IntTime rem 100,
-  NewTemp = abs(math:sin((X+Y)*TwoTime)*40),
+  NewTemp = abs(math:sin((X+Y+0.1)*TwoTime)*40),
   NewTemp.
 
 windFunc(X,Y) ->
   OneWind = erlang:system_time()/9,
   IntWind = round(OneWind),
   TwoWind = IntWind rem 100,
-  NewWind = abs(math:sin((X+Y)*TwoWind)*30),
+  NewWind = abs(math:sin((X+Y+0.1)*TwoWind)*30),
   NewWind.
+

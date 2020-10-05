@@ -77,7 +77,6 @@ wakeup(_EventType,_Other,{Energy,Time,SensorPid})->
 
 
 die(_EventType,_,[])->
-  io:format("im (the battery) dead"),
   {next_state,die,[]}.
 
 sleep(_EventType,"Sleep",{Energy,Time,SensorPid})->

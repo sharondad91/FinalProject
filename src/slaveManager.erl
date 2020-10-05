@@ -10,13 +10,12 @@
 
 -export([start_server/4]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
-  code_change/3,test/0,transferMessages/1]).
+  code_change/3,send/2]).
 
 -import(sensor,[]).
 -define(SERVER, ?MODULE).
 
--record(slaveMaster_state, {}).
-%-record(sensorData, {cord,pid,status,neighborList}).
+%%-record(slaveMaster_state, {}).
 -record(sensorData, {x,y}).
 
 %%%===================================================================
@@ -31,25 +30,34 @@ init([TableName, {StartX,EndX},{StartY,EndY}]) ->
   MyPid = self(),
   mnesia:create_schema(node()),
   mnesia:start(),
-  OK = mnesia:create_table(TableName,[{access_mode, read_write}, {type, set}, {record_name, sensorData}, {attributes, record_info(fields, sensorData)}]),
-%%  R = #sensorData{cord =3, pid = 0.87, status = on,neighborList = []},
-%%  R = #sensorData{x ={3,4}, y ={ 0.87, on, []}},
-%%  P = #sensorData{x ={2,6}, y ={ 0.87, off, [{3,4}]}},
-%%  mnesia:dirty_write(TableName,R),
-%%  mnesia:dirty_write(TableName,P),
-%%  Q = mnesia:dirty_read(TableName,{3,4}),
-%%  W = mnesia:dirty_read(TableName,{2,6}),
-%%  io:format("dirty ~p~n",[Q]),
-%%  io:format("dirty ~p~n",[W]),
+  mnesia:create_table(TableName,[{access_mode, read_write}, {type, set}, {record_name, sensorData}, {attributes, record_info(fields, sensorData)}]),
   createTableRow(TableName, MyPid,StartX,StartY,EndX,EndY),
-  transferMessages(TableName),
-  {ok, OK}.
+  {ok, TableName}.
 
 handle_call(_Request, _From, State) ->
   {reply, ok, State}.
 
-handle_cast(_Request, State) ->
-  {noreply, State}.
+handle_cast({{Temp,Wind},SenderLocation,TransferLocation}, TableName) ->
+  funcTransfer(TableName,{Temp,Wind},SenderLocation,TransferLocation),
+  {noreply, TableName};
+
+handle_cast({"I woke up", {X,Y}}, TableName) ->
+  switchOn(TableName,X,Y),
+  {noreply, TableName};
+
+handle_cast({"Im going to sleep", {X,Y}}, TableName) ->
+  switchOff(TableName,X,Y),
+  {noreply, TableName};
+
+handle_cast({"Battery dead", {X,Y}}, TableName) ->
+%%  TODO send to the MasterManger
+  [{_NameTable,_Location,{SensorPid,_Status, _NeighborList}}] = mnesia:dirty_read(TableName, {X,Y}),
+  sensor:stop(SensorPid),
+  {noreply, TableName};
+
+handle_cast(_Other, TableName) ->
+  {noreply, TableName}.
+
 
 handle_info(_Info, State) ->
   {noreply, State}.
@@ -63,18 +71,6 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-test() ->
-  Pid = self(),
-  SensorPid = sensor:start_sensor(Pid,1234,1212),
-  sensor:on(SensorPid),
-  block().
-
-block() ->
-  receive
-    Temp->Temp,
-      io:format("Mes: ~p ~n",[Temp])
-  end,
-  block().
 
 createTableRow(TableName, ManagerPid,X,Y,EndX,EndY) when X =< EndX  ->
   createTableCol(TableName, ManagerPid,X,Y,EndY),
@@ -99,44 +95,47 @@ createTableCol(TableName, ManagerPid,X,Y,EndY) when Y=< EndY ->
   R = #sensorData{x ={X,Y}, y ={ TempSensorPid, true, List}},
   mnesia:dirty_write(TableName,R),
   sensor:on(TempSensorPid),
-%%  W = mnesia:dirty_read(TableName,{X,Y}),
-%%  io:format("Sensor created: ~p~n",[W]),
   createTableCol(TableName, ManagerPid,X,Y+1,EndY);
 
 createTableCol(_TableName, _ManagerPid,_X,_Y,_EndY) -> ok.
 
-transferMessages(TableName) ->
-  receive
-    {{Temp,Wind},SenderLocation,TransferLocation} -> funcTransfer(TableName,{Temp,Wind},SenderLocation,TransferLocation);
-    {"I woke up", {X,Y}} -> switchOn(TableName,X,Y);
-    {"Im going to sleep", {X,Y}} -> switchOff(TableName,X,Y);
-     _Other -> io:format("No Match~n")
-  end,
-  transferMessages(TableName).
-
 switchOn(TableName,X,Y) ->
-  [{_NameTable,Location,{Pid,Status, NeighborList}}] = mnesia:dirty_read(TableName, {X,Y}),
-  R = #sensorData{x =Location, y ={ Pid, not Status, NeighborList}},
-  mnesia:dirty_write(TableName,R),
-  io:format("{~p,~p} Swiched on~n", [X,Y]).
+  [{_NameTable,Location,{Pid,_Status, NeighborList}}] = mnesia:dirty_read(TableName, {X,Y}),
+  R = #sensorData{x =Location, y ={ Pid, true, NeighborList}},
+  mnesia:dirty_write(TableName,R).
+
 
 
 switchOff(TableName,X,Y) ->
  [{_NameTable,Location,{Pid,Status, NeighborList}}] = mnesia:dirty_read(TableName, {X,Y}),
   R = #sensorData{x =Location, y ={ Pid, not Status, NeighborList}},
-  mnesia:dirty_write(TableName,R),
-  io:format("{~p,~p} Swiched off~n", [X,Y]).
+  mnesia:dirty_write(TableName,R).
+
 
 funcTransfer(TableName, {Temp,Wind},SenderLocation,TransferLocation) ->
   Q = mnesia:dirty_read(TableName,TransferLocation),
+
   [{_NameTable,_Location,{_Pid,_Status, NeighborList}}]= Q,
-  Forward = fun(Sensor) -> sendMessage(TableName, {Temp,Wind},SenderLocation,Sensor) end,
-  lists:foreach(Forward,NeighborList).
+  if
+    TransferLocation == {0,0} -> io:format("{0,0} recive from ~p data:~p~n", [SenderLocation,{Temp,Wind}]);
+    true -> Forward = fun(Sensor) -> sendMessage(TableName, {Temp,Wind},SenderLocation,Sensor) end,
+      lists:foreach(Forward,NeighborList)
+  end.
+
 
 sendMessage(TableName, {Temp,Wind},SenderLocation ,NextLocation) ->
-  [{_NameTable,_Location,{NextPid,Status, _NeighborList}}] = mnesia:dirty_read(TableName,NextLocation),
+  Q = mnesia:dirty_read(TableName,NextLocation),
   if
-    Status == true -> NextPid ! {{Temp,Wind},SenderLocation},
-      io:format("Transfer data from: ~p to ~p~n", [SenderLocation,NextLocation]);
-    true -> ok
+    Q == [] -> ok;%%TODO send to the master
+    true -> [{_NameTable,_Location,{NextPid,Status, _NeighborList}}] = Q,
+      if
+        Status == true -> NextPid ! {{Temp,Wind},SenderLocation};
+%%      io:format("~p recive from ~p data:~p~n", [Location, SenderLocation,{Temp,Wind}]);
+        true -> ok
+      end
   end.
+
+
+
+send(MyPid,Msg)->
+  gen_server:cast(MyPid,Msg).
