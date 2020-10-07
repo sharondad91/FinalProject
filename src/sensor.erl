@@ -34,7 +34,8 @@
 %% initialize. To ensure a synchronized start-up procedure, this
 %% function does not return until Module:init/1 has returned.
 start_sensor(ManagerPid,X,Y) ->
-  {ok ,Pid} = gen_statem:start_link(?MODULE, [ManagerPid,X,Y], []),
+%%  {ok ,Pid} = gen_statem:start_link(?MODULE, [ManagerPid,X,Y], []),
+  {ok ,Pid} = gen_statem:start(?MODULE, [ManagerPid,X,Y], []),
   Pid.
 %%%===================================================================
 %%% gen_statem callbacks
@@ -68,7 +69,7 @@ startSensor(_EventType,"Turn On",{BatPid, ManagerPid,X,Y}) ->
   SelfPid = self(),
   if
     {X,Y} == {0,0} -> spawn(fun() -> timer(on, SelfPid) end);
-    true -> spawn(fun() -> timer(on, SelfPid,rand:uniform(5000)) end)
+    true -> spawn(fun() -> timer(on, SelfPid,rand:uniform(10000)) end)
   end,
 
   {next_state, transfer, {BatPid, ManagerPid,X,Y}}.
@@ -76,14 +77,16 @@ startSensor(_EventType,"Turn On",{BatPid, ManagerPid,X,Y}) ->
 on(_EventType,"wake up", {BatPid, ManagerPid,X,Y})->
   battery:wakeup(BatPid),
   slaveManager:send(ManagerPid,{"I woke up", {X,Y}}),
-%%  ManagerPid ! {"I woke up", {X,Y}},
   slaveManager:send(ManagerPid,{{tempFunc(X,Y),windFunc(X,Y)}, {X,Y}, {X,Y}}),
-%%  ManagerPid ! {{tempFunc(X,Y),windFunc(X,Y)}, {X,Y}, {X,Y}},
-  {next_state,transfer,  {BatPid, ManagerPid,X,Y}}.
+  {next_state,transfer,  {BatPid, ManagerPid,X,Y}};
+
+on(_EventType,_other, {BatPid, ManagerPid,X,Y})->
+  {next_state,on,  {BatPid, ManagerPid,X,Y}}.
 
 transfer(_EventType,{{Temp,Wind}, SenderLocation} , {BatPid, ManagerPid,X,Y})->
   if
-    {X,Y} == {0,0} -> io:format("{0,0} entrey: recived from ~p messege ~p~n",[SenderLocation,{Temp,Wind}]) ;
+    {X,Y} == {0,0} -> ok ; %TODO update data table
+%%    {X,Y} == {0,0} -> io:format("{0,0} entrey: recived from ~p messege ~p~n",[SenderLocation,{Temp,Wind}]) ;
     true ->
       Val = put(SenderLocation,{SenderLocation,Temp,Wind}),
       if
@@ -111,6 +114,7 @@ off(_EventType,"sleep",{BatPid, ManagerPid,X,Y})->
   slaveManager:send(ManagerPid,{"Im going to sleep", {X,Y}}),
 %%  ManagerPid ! {"Im going to sleep", {X,Y}},
   erase(),
+  c:flush(),
   battery:sleep(BatPid),
   {next_state, on, {BatPid, ManagerPid,X,Y}}.
 
@@ -150,17 +154,16 @@ transfer(Pid, Message)->
 stop(PID)-> gen_statem:stop(PID).
 
 
-
 timer(off,SensorPid,StartTime) ->
   timer:sleep(StartTime),
   SensorPid ! "wake up",
-  timer(on,SensorPid,8000);
+  timer(on,SensorPid,2000);
 
 timer(on,SensorPid,StartTime) ->
   timer:sleep(StartTime),
   SensorPid ! "Exit",
   SensorPid ! "sleep",
-  timer(off,SensorPid,2000).
+  timer(off,SensorPid,8000).
 
 timer(on,SensorPid) ->
   timer:sleep(100000000),
