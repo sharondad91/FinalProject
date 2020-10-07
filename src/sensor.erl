@@ -85,7 +85,7 @@ on(_EventType,_other, {BatPid, ManagerPid,X,Y})->
 
 transfer(_EventType,{{Temp,Wind}, SenderLocation} , {BatPid, ManagerPid,X,Y})->
   if
-    {X,Y} == {0,0} -> ok ; %TODO update data table
+    {X,Y} == {0,0} -> masterManager:send({"Update Data Table",SenderLocation, {Temp,Wind}});
 %%    {X,Y} == {0,0} -> io:format("{0,0} entrey: recived from ~p messege ~p~n",[SenderLocation,{Temp,Wind}]) ;
     true ->
       Val = put(SenderLocation,{SenderLocation,Temp,Wind}),

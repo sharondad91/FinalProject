@@ -190,15 +190,10 @@ switchOff(TableName,X,Y) ->
   mnesia:dirty_write(TableName,R).
 
 funcTransfer(TableName, {Temp,Wind},SenderLocation,TransferLocation) ->
-  Q = mnesia:dirty_read(TableName,TransferLocation),
-
-  [{_NameTable,_Location,{_Pid,_Status, NeighborList}}]= Q,
-  if
-%%    TransferLocation == {0,0} -> io:format("{0,0} recive from ~p data:~p~n", [SenderLocation,{Temp,Wind}]);
-      TransferLocation == {0,0} -> masterManager:send({"Update Data Table",SenderLocation, {Temp,Wind}});
-      true -> Forward = fun(Sensor) -> sendMessage(TableName, {Temp,Wind},SenderLocation,TransferLocation,Sensor) end,
-      lists:foreach(Forward,NeighborList)
-  end.
+  [{_NameTable,_Location,{_Pid,_Status, NeighborList}}] = mnesia:dirty_read(TableName,TransferLocation),
+  Forward = fun(Sensor) -> sendMessage(TableName, {Temp,Wind},SenderLocation,TransferLocation,Sensor) end,
+  lists:foreach(Forward,NeighborList).
+  
 
 sendMessage(TableName, {Temp,Wind},SenderLocation,TransferLocation,NextLocation) ->
   Q = mnesia:dirty_read(TableName,NextLocation),

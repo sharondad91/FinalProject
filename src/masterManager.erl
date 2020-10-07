@@ -15,7 +15,6 @@
 -define(SERVER, ?MODULE).
 
 %%-record(masterManager_state, {}).
--record(sensorDisplayData, {x,y}).
 -record(sensorData, {x,y}).
 
 
@@ -36,7 +35,7 @@ init([Size]) ->
   mnesia:create_table(slaveTable3,[{access_mode, read_write}, {type, set}, {record_name, sensorData}, {attributes, record_info(fields, sensorData)}]),
   mnesia:create_table(slaveTable4,[{access_mode, read_write}, {type, set}, {record_name, sensorData}, {attributes, record_info(fields, sensorData)}]),
 
-%%  להרים את הסופרויזור
+  %%  להרים את הסופרויזור
   %להרים מהסופרויזר את הסלייבים
   NewSize = erlang:trunc(Size/2),
   slaveManager:start_server(slaveManager1,slaveTable1,tableets1,Size, {0,NewSize-1},{0,NewSize-1}),
@@ -61,7 +60,7 @@ handle_cast({"Slave Ready", _SlaveName}, {Size,Count}) ->
 
 handle_cast({"Battery dead", {X,Y}}, {Size,Count}) ->
   io:format("~p Battery is dead~n",[{X,Y}]),
-  R = #sensorDisplayData{x ={X,Y}, y ={0,0}},
+  R = #sensorData{x ={X,Y}, y ={0,0}},
   mnesia:dirty_write(programData,R),
   {noreply,  {Size,Count}};
 
@@ -91,7 +90,7 @@ handle_cast({"Not In My Table",SenderLocation, {Temp,Wind},{X,Y}}, {Size,Count})
 
 handle_cast({"Update Data Table",SenderLocation, {Temp,Wind}},  {Size,Count}) ->
   io:format("~p Update his data:~p~n",[SenderLocation,{Temp,Wind}]),
-  R = #sensorDisplayData{x =SenderLocation, y ={Temp,Wind}},
+  R = #sensorData{x =SenderLocation, y ={Temp,Wind}},
   mnesia:dirty_write(programData,R),
   {noreply,  {Size,Count}}.
 
