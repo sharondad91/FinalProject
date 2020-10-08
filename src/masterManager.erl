@@ -10,7 +10,7 @@
 
 -export([start_link/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
-  code_change/3,testCondisions/2,send/1,whereIsEfi/2]).
+  code_change/3,testCondisions/2,send/1,whereIsEfi/2,showMeTheData/0,showMe1/3]).
 
 -define(SERVER, ?MODULE).
 
@@ -23,7 +23,7 @@
 %%%===================================================================
 
 start_link() ->
-  gen_server:start_link({global, ?SERVER}, ?MODULE, [6], []).
+  gen_server:start_link({global, ?SERVER}, ?MODULE, [200], []).
 
 init([Size]) ->
   register(?SERVER,self()),
@@ -60,9 +60,14 @@ handle_cast({"Slave Ready", _SlaveName}, {Size,Count}) ->
 
 handle_cast({"Battery dead", {X,Y}}, {Size,Count}) ->
   io:format("~p Battery is dead~n",[{X,Y}]),
+  if
+    Count==10 -> showMeTheData(),
+      NewCount = Count+1;
+    true -> NewCount = Count+1
+  end,
   R = #sensorData{x ={X,Y}, y ={0,0}},
   mnesia:dirty_write(programData,R),
-  {noreply,  {Size,Count}};
+  {noreply,  {Size,NewCount}};
 
 handle_cast({"Not In My Table",SenderLocation, {Temp,Wind},{X,Y}}, {Size,Count}) ->
   Cond = testCondisions({X,Y},Size),
@@ -89,7 +94,7 @@ handle_cast({"Not In My Table",SenderLocation, {Temp,Wind},{X,Y}}, {Size,Count})
   {noreply,  {Size,Count}};
 
 handle_cast({"Update Data Table",SenderLocation, {Temp,Wind}},  {Size,Count}) ->
-  io:format("~p Update his data:~p~n",[SenderLocation,{Temp,Wind}]),
+%%  io:format("~p Update his data:~p~n",[SenderLocation,{Temp,Wind}]),
   R = #sensorData{x =SenderLocation, y ={Temp,Wind}},
   mnesia:dirty_write(programData,R),
   {noreply,  {Size,Count}}.
@@ -138,3 +143,30 @@ whereIsEfi(X,Y) ->
     Q4 =/= [] -> io:format("slaveTable4~n");
     true -> ok
   end.
+
+showMeTheData() ->
+  Q1 = mnesia:dirty_read(programData,{1,1}),
+  io:format("~p~n",[Q1]),
+  Q2 = mnesia:dirty_read(programData,{2,2}),
+  io:format("~p~n",[Q2]),
+  Q3 = mnesia:dirty_read(programData,{3,3}),
+  io:format("~p~n",[Q3]),
+  Q4 = mnesia:dirty_read(programData,{4,4}),
+  io:format("~p~n",[Q4]),
+  Q5 = mnesia:dirty_read(programData,{5,5}),
+  io:format("~p~n",[Q5]).
+
+showMe1(X,Y,Size) when ((X < Size) and (Y < Size))->
+  Q1 = mnesia:dirty_read(programData,{X,Y}),
+  io:format("~p~n",[Q1]),
+  showMe1(X+1,Y,Size),
+  showMe1(X,Y+1,Size);
+showMe1(_X,_Y,_Z) ->  ok.
+%showMe2(X,Y)
+%%  Q = mnesia:all_keys(programData),
+%%  Forward = fun(Key) ->
+%%    Q1 = mnesia:dirty_read(programData, Key),
+%%    io:format("~p,~p~n",[Key,Q1]) end,
+%%  lists:foreach(Forward,Q).
+
+

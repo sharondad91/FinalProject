@@ -37,7 +37,7 @@ init([Name,TableName,EtsName,Size, {StartX,EndX},{StartY,EndY}]) ->
 %%  mnesia:create_table(TableName,[{access_mode, read_write}, {type, set}, {record_name, sensorData}, {attributes, record_info(fields, sensorData)}]),
   MonitorEts = ets:new(EtsName,[set,named_table,public]),
   MonitorPid = spawn_link(fun() -> sensorsMonitor(TableName,MyPid,MonitorEts) end),
-  createTableRow(TableName,MonitorPid,Size,3,MyPid,StartX,StartY,{StartX,StartY,EndX,EndY}),
+  createTableRow(TableName,MonitorPid,Size,6,MyPid,StartX,StartY,{StartX,StartY,EndX,EndY}),
 %%  gen_server:cast(masterManager,{"Slave Ready", TableName}),
   masterManager:send({"Slave Ready", TableName}),
 %%  io:format("Slave ~p Is Ready~n",[TableName]),

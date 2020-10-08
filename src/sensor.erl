@@ -106,6 +106,10 @@ transfer(_EventType,"Battery dead" , {BatPid, ManagerPid,X,Y})->
 
 transfer(_EventType,_FireAlert , {BatPid, ManagerPid,X,Y})->
   io:format("Fire or Unknown, Run!!!!!!!!!!!!!"),
+  {next_state,transfer,  {BatPid, ManagerPid,X,Y}};
+
+transfer(_EventType,Other , {BatPid, ManagerPid,X,Y})->
+  io:format("Transfer get ~p ~n",Other),
   {next_state,transfer,  {BatPid, ManagerPid,X,Y}}.
 
 
@@ -114,10 +118,12 @@ off(_EventType,"sleep",{BatPid, ManagerPid,X,Y})->
   slaveManager:send(ManagerPid,{"Im going to sleep", {X,Y}}),
 %%  ManagerPid ! {"Im going to sleep", {X,Y}},
   erase(),
-  c:flush(),
+%%  c:flush(),
   battery:sleep(BatPid),
-  {next_state, on, {BatPid, ManagerPid,X,Y}}.
+  {next_state, on, {BatPid, ManagerPid,X,Y}};
 
+off(_EventType,_other,{BatPid, ManagerPid,X,Y})->
+  {next_state, off, {BatPid, ManagerPid,X,Y}}.
 
 dead(_EventType, _Message, {}) ->
   {next_state, dead,{}}.
