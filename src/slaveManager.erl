@@ -37,43 +37,46 @@ init([Name,TableName,EtsName,Size, {StartX,EndX},{StartY,EndY}]) ->
 %%  mnesia:create_table(TableName,[{access_mode, read_write}, {type, set}, {record_name, sensorData}, {attributes, record_info(fields, sensorData)}]),
   MonitorEts = ets:new(EtsName,[set,named_table,public]),
   MonitorPid = spawn_link(fun() -> sensorsMonitor(TableName,MyPid,MonitorEts) end),
-  createTableRow(TableName,MonitorPid,Size,6,MyPid,StartX,StartY,{StartX,StartY,EndX,EndY}),
+  createTableRow(TableName,MonitorPid,Size,4,MyPid,StartX,StartY,{StartX,StartY,EndX,EndY}),
 %%  gen_server:cast(masterManager,{"Slave Ready", TableName}),
   masterManager:send({"Slave Ready", TableName}),
 %%  io:format("Slave ~p Is Ready~n",[TableName]),
-  {ok, TableName}.
+  Center = erlang:trunc(Size/2)-1,
+  {ok, {TableName,Center}}.
 
 handle_call(_Request, _From, State) ->
   {reply, ok, State}.
 
-handle_cast({{Temp,Wind},SenderLocation,TransferLocation}, TableName) ->
-  funcTransfer(TableName,{Temp,Wind},SenderLocation,TransferLocation),
-  {noreply, TableName};
+handle_cast({{Temp,Wind},SenderLocation,TransferLocation}, {TableName, Center}) ->
+  funcTransfer(TableName,{Temp,Wind},SenderLocation,TransferLocation,Center),
+  {noreply, {TableName, Center}};
 
-handle_cast({"I woke up", {X,Y}}, TableName) ->
-  switchOn(TableName,X,Y),
-  {noreply, TableName};
+handle_cast({"I woke up", {X,Y},Energy}, {TableName, Center}) ->
+  switchOn(TableName,X,Y,Energy),
+%%  io:format("~p Energy is:~p~n",[{X,Y},Energy]),
+  {noreply, {TableName, Center}};
 
-handle_cast({"Im going to sleep", {X,Y}}, TableName) ->
+handle_cast({"Im going to sleep", {X,Y}}, {TableName, Center}) ->
   switchOff(TableName,X,Y),
-  {noreply, TableName};
+  {noreply, {TableName, Center}};
 
-handle_cast({"Battery dead", {X,Y}}, TableName) ->
+handle_cast({"Battery dead", {X,Y}}, {TableName, Center}) ->
   gen_server:cast(masterManager,{"Battery dead", {X,Y}}),
-  [{_NameTable,_Location,{SensorPid,_Status, _NeighborList}}] = mnesia:dirty_read(TableName, {X,Y}),
+  [{_NameTable,_Location,{SensorPid,_Status,_Energy, _NeighborList}}] = mnesia:dirty_read(TableName, {X,Y}),
   sensor:stop(SensorPid),
-  {noreply, TableName};
+  {noreply, {TableName, Center}};
 
-handle_cast({"Start All Sensors"}, TableName) ->
+handle_cast({"Start All Sensors"}, {TableName, Center}) ->
   startAllSensors(TableName),
-  {noreply, TableName};
+  {noreply, {TableName, Center}};
 
-handle_cast({"Your Sensor", SenderLocation, {Temp,Wind},NextLocation}, TableName) ->
-  sendMessage(TableName,{Temp,Wind},SenderLocation,NextLocation,NextLocation),
-  {noreply, TableName};
+handle_cast({"Your Sensor", SenderLocation, {Temp,Wind},NextLocation}, {TableName, Center}) ->
+%%  io:format("Your Sensor from ~p to ~p in table ~p~n",[SenderLocation,NextLocation,TableName]),
+  sendMessage(TableName,{Temp,Wind},SenderLocation,NextLocation,NextLocation,Center),
+  {noreply, {TableName, Center}};
 
-handle_cast(_Other, TableName) ->
-  {noreply, TableName}.
+handle_cast(_Other, {TableName, Center}) ->
+  {noreply, {TableName, Center}}.
 
 
 handle_info(_Info, State) ->
@@ -96,9 +99,10 @@ createTableRow(TableName,Monitor,Size,Rad, ManagerPid,X,Y,{StartX,StartY,EndX,En
 createTableRow(_TableName,_Monitor,_Size,_Rad, _ManagerPid,_X,_Y,_Boundaries) -> ok.
 
 createTableCol(TableName,Monitor,Size,Rad, ManagerPid,X,Y,{StartX,StartY,EndX,EndY}) when Y=< EndY ->
-  TempSensorPid = sensor:start_sensor(ManagerPid,X,Y),
+  Center = erlang:trunc(Size/2)-1,
+  TempSensorPid = sensor:start_sensor(ManagerPid,X,Y,Center),
   Monitor ! {TempSensorPid,{X,Y}},
-  R = #sensorData{x ={X,Y}, y ={ TempSensorPid, true, []}},
+  R = #sensorData{x ={X,Y}, y ={ TempSensorPid, true,100, []}},
   mnesia:dirty_write(TableName,R),
   createNeighbors(TableName,Size,Rad,X,Y),
   createTableCol(TableName,Monitor,Size,Rad, ManagerPid,X,Y+1,{StartX,StartY,EndX,EndY});
@@ -122,7 +126,7 @@ createNeighbors(TableName,Size,Rad,X,Y) when Rad>=1 ->
 create(TableName,Size,Rad,From,XPoint,YPoint,Xnei,Ynei)->
   Good = testCondisions({Xnei,Ynei},Size),
   if
-    Good == true -> [{_NameTable,_Location,{_Pid,_Status, NeighborList}}] = mnesia:dirty_read(TableName, {XPoint,YPoint}),
+    Good == true -> [{_NameTable,_Location,{_Pid,_Status,_Energy, NeighborList}}] = mnesia:dirty_read(TableName, {XPoint,YPoint}),
       Exist = lists:member({Xnei,Ynei},NeighborList),
       if
         Exist == true -> [];
@@ -159,14 +163,14 @@ create(TableName,Size,Rad,From,XPoint,YPoint,Xnei,Ynei)->
 
 addNeighbor(TableName,XPoint,YPoint,Xnei,Ynei) ->
 %%  io:format("{~p,~p} try to add {~p,~p}~n", [XPoint,YPoint,Xnei,Ynei]),
-  [{_NameTable,_Location,{Pid,Status, NeighborList}}] = mnesia:dirty_read(TableName, {XPoint,YPoint}),
+  [{_NameTable,_Location,{Pid,Status,Energy, NeighborList}}] = mnesia:dirty_read(TableName, {XPoint,YPoint}),
   Exist = lists:member({Xnei,Ynei},NeighborList),
   if
     Exist == true -> ok;
     true ->
 %      NewList = lists:join({Xnei,Ynei},NeighborList),
 %%      io:format("{~p,~p} add{~p,~p}~n", [XPoint,YPoint,Xnei,Ynei]),
-      R = #sensorData{x = {XPoint,YPoint}, y ={ Pid, Status, [{Xnei,Ynei}|NeighborList]}},
+      R = #sensorData{x = {XPoint,YPoint}, y ={ Pid, Status,Energy, [{Xnei,Ynei}|NeighborList]}},
       mnesia:dirty_write(TableName,R)
   end.
 
@@ -176,33 +180,50 @@ startAllSensors(TableName) ->
   lists:foreach(Forward,AllKeys).
 
 startSensor(TableName,{X,Y}) ->
-  [{_NameTable,_Location,{TempSensorPid,_Status, _NeighborList}}] = mnesia:dirty_read(TableName, {X,Y}),
+  [{_NameTable,_Location,{TempSensorPid,_Status,_Energy, _NeighborList}}] = mnesia:dirty_read(TableName, {X,Y}),
   sensor:on(TempSensorPid).
 
-switchOn(TableName,X,Y) ->
-  [{_NameTable,Location,{Pid,_Status, NeighborList}}] = mnesia:dirty_read(TableName, {X,Y}),
-  R = #sensorData{x =Location, y ={ Pid, true, NeighborList}},
+switchOn(TableName,X,Y,Energy) ->
+  [{_NameTable,Location,{Pid,_Status,_LastEnergy, NeighborList}}] = mnesia:dirty_read(TableName, {X,Y}),
+  R = #sensorData{x =Location, y ={ Pid, true,Energy, NeighborList}},
   mnesia:dirty_write(TableName,R).
 
 switchOff(TableName,X,Y) ->
- [{_NameTable,Location,{Pid,Status, NeighborList}}] = mnesia:dirty_read(TableName, {X,Y}),
-  R = #sensorData{x =Location, y ={ Pid, not Status, NeighborList}},
+ [{_NameTable,Location,{Pid,Status,Energy, NeighborList}}] = mnesia:dirty_read(TableName, {X,Y}),
+  R = #sensorData{x =Location, y ={ Pid, not Status,Energy, NeighborList}},
   mnesia:dirty_write(TableName,R).
 
-funcTransfer(TableName, {Temp,Wind},SenderLocation,TransferLocation) ->
-  [{_NameTable,_Location,{_Pid,_Status, NeighborList}}] = mnesia:dirty_read(TableName,TransferLocation),
-  Forward = fun(Sensor) -> sendMessage(TableName, {Temp,Wind},SenderLocation,TransferLocation,Sensor) end,
-  lists:foreach(Forward,NeighborList).
+funcTransfer(TableName, {Temp,Wind},SenderLocation,TransferLocation,Center) ->
+  [{_NameTable,_Location,{_Pid,_Status,_Energy, NeighborList}}] = mnesia:dirty_read(TableName,TransferLocation),
+  ZeroState = lists:member({Center,Center},NeighborList),
+  if
+    ZeroState == true ->
+%%    Zero==true -> io:format("Zero=true,TableName =~p, senderLocation:~p, TransterLocation:~p~n",[TableName,SenderLocation,TransferLocation]),
+%%      Q = mnesia:dirty_read(TableName, {0,0}),
+%%      io:format("Q is:~p~n",[Q]),
+%%      [{_NameTable,_Location,{Pid,_Status, _NeighborList}}] =Q,
+%%      Pid ! {{Temp,Wind},SenderLocation};
+      sendMessage(TableName, {Temp,Wind},SenderLocation,TransferLocation,{Center,Center},Center);
+    true ->Forward = fun(Sensor) -> sendMessage(TableName, {Temp,Wind},SenderLocation,TransferLocation,Sensor,Center) end,
+      lists:foreach(Forward,NeighborList)
+  end.
+
   
 
-sendMessage(TableName, {Temp,Wind},SenderLocation,TransferLocation,NextLocation) ->
+sendMessage(TableName, {Temp,Wind},SenderLocation,TransferLocation,NextLocation,Center) ->
   Q = mnesia:dirty_read(TableName,NextLocation),
   if
     Q == [] -> masterManager:send({"Not In My Table",SenderLocation, {Temp,Wind},NextLocation});
-    true -> [{_NameTable,_Location,{NextPid,Status, _NeighborList}}] = Q,
-      Better = closerFunc(TransferLocation,NextLocation),
+    true -> [{_NameTable,_Location,{NextPid,Status,_Energy, _NeighborList}}] = Q,
+      Better = closerFunc(TransferLocation,NextLocation,Center),
       if
-        (Status == true) and (Better == true) -> NextPid ! {{Temp,Wind},SenderLocation};
+        (Status == true) and (Better == true) ->
+%%          {X,Y} = SenderLocation,
+%%          if
+%%            (X==37) and (Y==31) -> io:format("Sender:~p, Trans:~p, Next:~p, Data:~p~n",[SenderLocation,TransferLocation,NextLocation,{Temp,Wind}]);
+%%            true -> ok
+%%          end,
+          NextPid ! {{Temp,Wind},SenderLocation};
 %%      io:format("~p recive from ~p data:~p~n", [Location, SenderLocation,{Temp,Wind}]);
         true -> ok
       end
@@ -232,12 +253,13 @@ sensorsMonitor(TableName,ManagerPid,MonitorEts) ->
 restartSensor(TableName, SensorPid,ManagerPid,MonitorEts) ->
   [{_Sens,{X,Y}}] = ets:lookup(MonitorEts,SensorPid),
   ets:delete(MonitorEts,SensorPid),
-  [{_NameTable,_Location,{_Pid,_Status, NeighborList}}] = mnesia:dirty_read(TableName, {X,Y}),
-  NewPid = sensor:start_sensor(ManagerPid,X,Y),
+  [{_NameTable,_Location,{_Pid,_Status,Energy, NeighborList}}] = mnesia:dirty_read(TableName, {X,Y}),
+  NewPid = sensor:start_sensor(ManagerPid,X,Y,Energy),
   erlang:monitor(process,NewPid),
-  R = #sensorData{x ={X,Y}, y ={ NewPid, false, NeighborList}},
+  R = #sensorData{x ={X,Y}, y ={ NewPid, false,Energy, NeighborList}},
   mnesia:dirty_write(TableName,R),
   ets:insert(MonitorEts,{NewPid,{X,Y}}),
+  io:format("~p restart and his Energy is ~p~n",[{X,Y},Energy]),
   startSensor(TableName,{X,Y}).
 
 testCondisions({X,Y},Size)  ->
@@ -248,8 +270,8 @@ testCondisions({X,Y},Size)  ->
       false
   end.
 
-closerFunc({OldX,OldY}, {NewX,NewY}) ->
+closerFunc({OldX,OldY}, {NewX,NewY},Center) ->
   if
-    (NewX =< OldX) or (NewY =< OldY) -> true;
+    (abs(Center-NewX) =< abs(Center-OldX)) and (abs(Center-NewY) =< abs(Center-OldY)) -> true;
     true -> false
   end.

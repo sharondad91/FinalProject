@@ -66,9 +66,9 @@ format_status(_Opt, [_PDict, _StateName, _State]) ->
 %% state name.  If callback_mode is state_functions, one of these
 %% functions is called when gen_statem receives and event from
 %% call/2, cast/2, or as a normal process message.
-wakeup(_EventType,"Wake Up", {Energy,_Time,SensorPid}) when Energy>0 ->
+wakeup({call,From},"Wake Up", {Energy,_Time,SensorPid}) when Energy>0 ->
 %%  io:format("Energy: ~p ~n", [Energy]),
-  {next_state,sleep,{Energy,erlang:system_time(),SensorPid}};
+  {next_state,sleep,{Energy,erlang:system_time(),SensorPid},{reply,From,Energy}};
 wakeup(_EventType,"Wake Up", {_Energy,_Time,SensorPid}) ->
   sensor:transfer(SensorPid,"Battery dead"),
   {next_state,die,[]};
@@ -116,7 +116,7 @@ code_change(_OldVsn, StateName, State , _Extra) ->
 %%% Internal functions
 %%%===================================================================
 wakeup(PID)->
-  gen_statem:cast(PID,"Wake Up").
+  gen_statem:call(PID,"Wake Up").
 sleep(PID)->
   gen_statem:cast(PID,"Sleep").
 stop(PID)-> gen_statem:stop(PID).

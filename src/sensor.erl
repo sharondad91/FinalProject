@@ -12,7 +12,7 @@
 -behaviour(gen_statem).
 
 %% API
--export([start_sensor/3, on/3, off/3,timer/3,timer/2, on/1, off/1,transfer/3, transfer/2,startSensor/3,dead/3,tempFunc/2,windFunc/2]).
+-export([start_sensor/4, on/3, off/3,timer/3,timer/2, on/1, off/1,transfer/3, transfer/2,startSensor/3,dead/3,tempFunc/2,windFunc/2]).
 
 %% gen_statem callbacks
 -export([init/1, format_status/2, handle_event/4, terminate/3,
@@ -33,9 +33,9 @@
 %% @doc Creates a gen_statem process which calls Module:init/1 to
 %% initialize. To ensure a synchronized start-up procedure, this
 %% function does not return until Module:init/1 has returned.
-start_sensor(ManagerPid,X,Y) ->
+start_sensor(ManagerPid,X,Y,Center) ->
 %%  {ok ,Pid} = gen_statem:start_link(?MODULE, [ManagerPid,X,Y], []),
-  {ok ,Pid} = gen_statem:start(?MODULE, [ManagerPid,X,Y], []),
+  {ok ,Pid} = gen_statem:start(?MODULE, [ManagerPid,X,Y,Center], []),
   Pid.
 %%%===================================================================
 %%% gen_statem callbacks
@@ -45,9 +45,9 @@ start_sensor(ManagerPid,X,Y) ->
 %% @doc Whenever a gen_statem is started using gen_statem:start/[3,4] or
 %% gen_statem:start_link/[3,4], this function is called by the new
 %% process to initialize.
-init([ManagerPid,X,Y]) ->
+init([ManagerPid,X,Y,Center]) ->
   BatPid = battery:start_battery(self()),
-  {ok, startSensor, {BatPid, ManagerPid,X,Y}}.
+  {ok, startSensor, {BatPid, ManagerPid,X,Y,Center}}.
 
 %% @private
 %% @doc This function is called by a gen_statem when it needs to find out
@@ -64,28 +64,28 @@ format_status(_Opt, [_PDict, _StateName, _State]) ->
   Status.
 
 
-startSensor(_EventType,"Turn On",{BatPid, ManagerPid,X,Y}) ->
+startSensor(_EventType,"Turn On",{BatPid, ManagerPid,X,Y,Center}) ->
 %%  spawn_link(fun() -> timer(on, self(),rand:uniform(5000)) end),
   SelfPid = self(),
   if
-    {X,Y} == {0,0} -> spawn(fun() -> timer(on, SelfPid) end);
+    {X,Y} == {Center,Center} -> spawn(fun() -> timer(on, SelfPid) end);
     true -> spawn(fun() -> timer(on, SelfPid,rand:uniform(10000)) end)
   end,
 
-  {next_state, transfer, {BatPid, ManagerPid,X,Y}}.
+  {next_state, transfer, {BatPid, ManagerPid,X,Y,Center}}.
 
-on(_EventType,"wake up", {BatPid, ManagerPid,X,Y})->
-  battery:wakeup(BatPid),
-  slaveManager:send(ManagerPid,{"I woke up", {X,Y}}),
+on(_EventType,"wake up", {BatPid, ManagerPid,X,Y,Center})->
+  Energy = battery:wakeup(BatPid),
+  slaveManager:send(ManagerPid,{"I woke up", {X,Y},Energy}),
   slaveManager:send(ManagerPid,{{tempFunc(X,Y),windFunc(X,Y)}, {X,Y}, {X,Y}}),
-  {next_state,transfer,  {BatPid, ManagerPid,X,Y}};
+  {next_state,transfer,  {BatPid, ManagerPid,X,Y,Center}};
 
-on(_EventType,_other, {BatPid, ManagerPid,X,Y})->
-  {next_state,on,  {BatPid, ManagerPid,X,Y}}.
+on(_EventType,_other, {BatPid, ManagerPid,X,Y,Center})->
+  {next_state,on,  {BatPid, ManagerPid,X,Y,Center}}.
 
-transfer(_EventType,{{Temp,Wind}, SenderLocation} , {BatPid, ManagerPid,X,Y})->
+transfer(_EventType,{{Temp,Wind}, SenderLocation} , {BatPid, ManagerPid,X,Y,Center})->
   if
-    {X,Y} == {0,0} -> masterManager:send({"Update Data Table",SenderLocation, {Temp,Wind}});
+    {X,Y} == {Center,Center} -> masterManager:send({"Update Data Table",SenderLocation, {Temp,Wind}});
 %%    {X,Y} == {0,0} -> io:format("{0,0} entrey: recived from ~p messege ~p~n",[SenderLocation,{Temp,Wind}]) ;
     true ->
       Val = put(SenderLocation,{SenderLocation,Temp,Wind}),
@@ -94,36 +94,36 @@ transfer(_EventType,{{Temp,Wind}, SenderLocation} , {BatPid, ManagerPid,X,Y})->
          true -> ok
       end
   end,
-  {next_state,transfer,  {BatPid, ManagerPid,X,Y}};
+  {next_state,transfer,  {BatPid, ManagerPid,X,Y,Center}};
 
-transfer(_EventType,"Exit" , {BatPid, ManagerPid,X,Y})->
-  {next_state,off,  {BatPid, ManagerPid,X,Y}};
+transfer(_EventType,"Exit" , {BatPid, ManagerPid,X,Y,Center})->
+  {next_state,off,  {BatPid, ManagerPid,X,Y,Center}};
 
-transfer(_EventType,"Battery dead" , {BatPid, ManagerPid,X,Y})->
+transfer(_EventType,"Battery dead" , {BatPid, ManagerPid,X,Y,_Center})->
   slaveManager:send(ManagerPid,{"Battery dead", {X,Y}}),
   battery:stop(BatPid),
   {next_state,dead,{}};
 
-transfer(_EventType,_FireAlert , {BatPid, ManagerPid,X,Y})->
+transfer(_EventType,_FireAlert , {BatPid, ManagerPid,X,Y,Center})->
   io:format("Fire or Unknown, Run!!!!!!!!!!!!!"),
-  {next_state,transfer,  {BatPid, ManagerPid,X,Y}};
+  {next_state,transfer,  {BatPid, ManagerPid,X,Y,Center}};
 
-transfer(_EventType,Other , {BatPid, ManagerPid,X,Y})->
+transfer(_EventType,Other , {BatPid, ManagerPid,X,Y,Center})->
   io:format("Transfer get ~p ~n",Other),
-  {next_state,transfer,  {BatPid, ManagerPid,X,Y}}.
+  {next_state,transfer,  {BatPid, ManagerPid,X,Y,Center}}.
 
 
 
-off(_EventType,"sleep",{BatPid, ManagerPid,X,Y})->
+off(_EventType,"sleep",{BatPid, ManagerPid,X,Y,Center})->
   slaveManager:send(ManagerPid,{"Im going to sleep", {X,Y}}),
 %%  ManagerPid ! {"Im going to sleep", {X,Y}},
   erase(),
 %%  c:flush(),
   battery:sleep(BatPid),
-  {next_state, on, {BatPid, ManagerPid,X,Y}};
+  {next_state, on, {BatPid, ManagerPid,X,Y,Center}};
 
-off(_EventType,_other,{BatPid, ManagerPid,X,Y})->
-  {next_state, off, {BatPid, ManagerPid,X,Y}}.
+off(_EventType,_other,{BatPid, ManagerPid,X,Y,Center})->
+  {next_state, off, {BatPid, ManagerPid,X,Y,Center}}.
 
 dead(_EventType, _Message, {}) ->
   {next_state, dead,{}}.
@@ -157,19 +157,20 @@ off(Pid)->
   gen_statem:stop(Pid).
 transfer(Pid, Message)->
   gen_statem:cast(Pid,Message).
+
 stop(PID)-> gen_statem:stop(PID).
 
 
 timer(off,SensorPid,StartTime) ->
   timer:sleep(StartTime),
   SensorPid ! "wake up",
-  timer(on,SensorPid,2000);
+  timer(on,SensorPid,4000);
 
 timer(on,SensorPid,StartTime) ->
   timer:sleep(StartTime),
   SensorPid ! "Exit",
   SensorPid ! "sleep",
-  timer(off,SensorPid,8000).
+  timer(off,SensorPid,6000).
 
 timer(on,SensorPid) ->
   timer:sleep(100000000),
